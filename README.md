@@ -1,88 +1,158 @@
-# Cost-Aware Calibration via Heterogeneous Ensemble Disagreement
+# Cost-Aware Calibration (CAC)
 
-Multi-agent annotation-calibration system. The ensemble of small open-weight models
-produces soft-label distributions + rationales; inter-model disagreement
-(**JSD** primary, **MTA** secondary) drives calibrated escalation to a frontier
-model only on genuinely ambiguous items. Evaluated against human disagreement on
-**CIFAR-10H** (vision) and **ChaosNLI** (text, cross-domain).
+**When Does Ensemble Disagreement Track Human Uncertainty? A Cost-Aware Study Across Model Scale, Sample Size, and Modality.**
 
-**Phase 1 (this repo)** replaces the v4 *simulation* (`files (1)/test_disagreement_v4.py`)
-with **real model infrastructure**: real VLM soft labels via vLLM+logprobs, real
-cross-encoder MTA, real DINOv2 pre-router embeddings — fed into the existing
-calibration pipeline. See `files (1)/literature_review.md` for the full background.
+CAC tests a simple intuition: when a small ensemble of models disagrees on an input, is that input genuinely hard for humans too — and can that disagreement cheaply route annotation, escalating only contested items to an expensive model or human? We evaluate this against **human label distributions** (CIFAR-10H for vision, ChaosNLI for language) and map where it holds and where it breaks.
 
-## Status (Phase 1, CIFAR-10H / vision-first)
+A heterogeneous small-model ensemble produces two disagreement signals — Jensen–Shannon divergence over class posteriors (JSD) and rationale dissimilarity (1 − MTA) — which are fused, calibrated to an escalation probability, and used to drive a three-stage **skip / consensus / frontier** cascade.
 
-| Step | What | State |
-|---|---|---|
-| 1.0 | Data prep + ordering alignment gate | **done & verified** (agreement 0.9921) |
-| 1.4 | Real DINOv2-ViT-S/14 embeddings (10k×384) | **done & verified** (pre-router AUC 0.767) |
-| 1.3 | Real cross-encoder MTA (`ms-marco-MiniLM-L-6-v2`) | **done & verified** (sanity test passes) |
-| —   | Pipeline refactor + `--simulate`/`--real` | **done** (sim reproduces v4: dual r≈0.79) |
-| 1.1 | VLM ensemble via vLLM+Outlines (logprob soft labels) | **code complete**; needs WSL+vLLM to run |
-| 1.2 | ChaosNLI text path | scaffolded (`cac/data/chaosnli.py`, `config/models_text.yaml`) |
-| —   | Pre-router false-easy at N=100 WSL2 = 22.2% | **investigate at N=10k HPC** — see `cac/pipeline/prerouter.py` |
+## Key results
 
-Everything except **1.1** runs and is verified on the Windows host (CUDA). 1.1 needs
-the Linux+CUDA vLLM stack (WSL2 locally for the 100-image smoke test; HPC for the
-full 10k run). A fixture (`run_vision_inference --mock`) exercises the full `--real`
-pipeline without a GPU.
+| Domain | Ensemble (N) | r_jsd | r_dual | Δr | Single | Cascade | Frontier % |
+|---|---|---|---|---|---|---|---|
+| Vision (CIFAR-10H) | 2B (10,000) | 0.311 | 0.319 | +0.008 | 0.940 | **0.965** | 22.8% |
+| Vision (CIFAR-10H) | 7–8B (100) | 0.292 | 0.309 | +0.018 | 0.967 | 0.922 | 10.0% |
+| Language (ChaosNLI) | 2×small (3,113) | 0.046 | 0.047 | +0.001 | 0.564 | 0.589 | 1.0% |
 
-## Layout
-```
-cac/                 # package
-  config.py          # paths, device, YAML loader
-  targets.py         # human entropy + 'truly hard' mask
-  data/              # cifar10h (download+align), labels, chaosnli (stub)
-  models/            # vllm_runner, prompts, schema  (Linux+CUDA only)
-  ensemble/          # soft_labels (logprobs->dist), jsd, inference, mock
-  mta/cross_encoder  # real MTA
-  embeddings/dino    # real DINOv2
-  pipeline/          # weights, calibration, prerouter, metrics, figures (v4 §5-12)
-  sim/legacy_v4      # original simulators (for --simulate + Phase-3.1 gap analysis)
-run/                 # prepare_data, run_vision_inference, compute_mta,
-                     #   extract_embeddings, run_pipeline
-config/              # cifar10h.yaml, models_vision.yaml, models_text.yaml
-scripts/             # setup_wsl.md, smoke_test_100.sh, hpc/run_inference.slurm
-tests/               # jsd, soft_labels, data alignment
-```
+- **Routing utility can decouple from correlation:** on CIFAR-10H the cascade beats the best single model (0.965 vs 0.940) at 4.4× lower frontier cost, despite only a modest correlation (r_dual = 0.319, 95% CI [0.299, 0.339]).
+- **The signal has boundaries:** it degrades with base-model scale, decays with evaluation size (r_jsd 0.41 → 0.31 from N=100 to 10,000), and does not transfer to language (ChaosNLI r_jsd = 0.046, 95% CI [0.011, 0.079]; cascade collapses).
+- The textual lift is **not** statistically significant at scale (Δr = +0.008, 95% CI [−0.003, +0.017]).
 
-## Quickstart
+## Environment
 
-### On the Windows host (no vLLM) — verifies 1.0 / 1.3 / 1.4 + pipeline
-```powershell
-pip install -r requirements-light.txt
-python -m run.prepare_data            # download + alignment gate
-python -m run.extract_embeddings      # real DINOv2 (1.4)
-python -m run.compute_mta --sanity    # cross-encoder acceptance (1.3)
-python -m run.run_vision_inference --mock --n 200   # fixture ensemble outputs
-python -m run.run_pipeline --simulate # reproduce v4
-python -m run.run_pipeline --real     # real DINOv2 + real MTA + fixture distributions
-python -m pytest tests/ -q
-```
+Single NVIDIA A100-80GB. Inference via vLLM 0.6.3 with `lm-format-enforcer` constrained decoding.
 
-### Real VLM inference (1.1) — WSL2 Ubuntu or HPC
-See `scripts/setup_wsl.md`, then:
 ```bash
-bash scripts/smoke_test_100.sh        # 100 images x 3 VLMs, end-to-end
+conda activate <env>           # e.g. /home/$USER/.conda/envs/cac
+python -c "import sentence_transformers as st; print(st.__version__)"   # must be 2.7.0
 ```
-Full 10k run on the cluster: `sbatch scripts/hpc/run_inference.slurm`
-(set `models_vision.yaml` `models:` to the `profiles.hpc` 7-8B ensemble first).
 
-## Key design choices
-- **Soft labels = token logprobs.** The answer is constrained to a single class
-  letter (A..J); the position-0 logprobs over those letters are softmaxed into a
-  genuine distribution — not a self-reported confidence number.
-- **One model at a time on 8 GB.** Sequential load→infer→free; full ensemble on HPC.
-- **`--simulate` is preserved**, not deleted: it powers the Phase-3.1 real-vs-sim gap
-  analysis (a stated contribution).
-- **Alignment gate first.** A silent CIFAR-10 / CIFAR-10H ordering mismatch would
-  invalidate every metric, so it is asserted before any inference.
+**Pinned dependencies (critical):** `sentence-transformers==2.7.0` (newer versions change the CrossEncoder API and break MTA), `torch==2.4.0+cu121`, `vllm==0.6.3.post1`, `transformers==4.46.3`, `numpy==1.26.4`. See `requirements.txt`.
 
-## Notes / risks
-- vLLM ⇄ model-version support changes fast; `requirements-gpu.txt` pins a version —
-  re-run the smoke test after any bump.
-- `ms-marco-MiniLM-L-6-v2` is a *relevance* cross-encoder; it cleanly separates
-  agreeing vs contradicting rationales in the sanity test but is asymmetric. An NLI
-  cross-encoder is a candidate if MTA signal quality is weak on real rationales
-  (a Discussion-section limitation).
+## Models
+
+Served offline from a local weight cache (`.hf_cache/`). Gated models (Gemma-2, Llama) require `huggingface-cli login` plus license acceptance on the model page.
+
+- **Vision 2B:** Qwen2-VL-2B-Instruct, InternVL2-2B
+- **Vision 7–8B:** Qwen2-VL-7B (AWQ), InternVL2-8B (fp16), Phi-3.5-Vision
+- **Language:** Qwen2.5-3B-Instruct, Gemma-2-2B-it (small, cross-family — chosen because stronger models suppress useful disagreement)
+
+## Reproduction
+
+### Data
+
+```bash
+# CIFAR-10H: 10,000 CIFAR-10 test images + human soft labels
+python -m run.prepare_data --download-models
+
+# ChaosNLI: SNLI+MNLI subset (3,113 examples), αNLI excluded
+wget -O data/chaosnli/chaosNLI_v1.0.zip "https://dl.dropboxusercontent.com/s/h4j7dqszmpt2679/chaosNLI_v1.0.zip?dl=1"
+cd data/chaosnli && unzip chaosNLI_v1.0.zip && cd -
+```
+
+> Note: ChaosNLI stores label entropy in **bits (base-2)**; `cac/data/chaosnli.py` cross-checks parsed `label_dist` against the file's `entropy` field on load. The `label_dist` index order is `[entailment, neutral, contradiction]`.
+
+### Vision track (CIFAR-10H)
+
+```bash
+# 1. ensemble inference -> outputs/raw/<model>.jsonl
+python -m run.run_vision_inference --n 10000
+
+# 2. rationale textual agreement (cross-encoder) -> outputs/cifar10h_mta.npy
+python -m run.compute_mta
+
+# 3. correlation report + full calibration/routing pipeline
+python -m run.report --dataset cifar10h
+python -m run.run_pipeline --real --dataset cifar10h
+```
+
+### Language track (ChaosNLI)
+
+```bash
+# 1. ensemble inference (Qwen2.5-3B + Gemma-2-2B)
+python -m run.run_text_inference --n 3113
+
+# 2-3. MTA + report + pipeline
+python -m run.compute_mta
+python -m run.report --dataset chaosnli
+python -m run.run_pipeline --real --dataset chaosnli
+```
+
+> **⚠️ Known footgun — running both tracks in one workspace.** Two paths are
+> currently hardcoded to CIFAR names and are *not* dataset-aware, so switching
+> between the vision and language tracks needs manual care:
+>
+> 1. **`outputs/raw/` must hold only one dataset at a time.** `load_distributions()`
+>    reads *every* `*.jsonl` in `outputs/raw/`; the 10-class CIFAR files and 3-class
+>    NLI files cannot be stacked together and will raise (or, if N coincides,
+>    silently mix shapes). Keep the inactive dataset's files elsewhere (e.g. the
+>    CIFAR files in `outputs/raw_cifar10h/` while the NLI track runs).
+> 2. **`compute_mta` always writes `outputs/cifar10h_mta.npy`** regardless of
+>    `--dataset`. Running it on the NLI track overwrites the CIFAR MTA array. Copy
+>    the file aside (e.g. `cifar10h_mta_CIFAR.npy`) before switching tracks, or
+>    you will have to regenerate it.
+>
+> Both are workarounds, not fixes — a future cleanup should make the MTA/embedding
+> artifact paths dataset-aware (e.g. `chaosnli_mta.npy` vs `cifar10h_mta.npy`).
+
+### Analyses (no GPU)
+
+Bootstrap CIs, the frontier-budget sweep, and the failure taxonomy are pure post-processing over the saved `outputs/raw/` distributions and MTA arrays. See `analysis/` (or the snippets in the paper appendix).
+
+### Frontier baseline (optional, paid API)
+
+```bash
+python -m run.run_frontier --subset outputs/chaosnli_frontier_subset.json --model <model>
+```
+The stratified 450-item subset (entropy terciles) is frozen in `outputs/chaosnli_frontier_subset.json`.
+
+## Repository layout
+
+```
+cac/
+  config.py              paths, device(), load_yaml()
+  data/
+    cifar10h.py          CIFAR-10H loader (prepare, download_probs)
+    chaosnli.py          ChaosNLI loader (load, human_distributions, sentence_embeddings)
+    labels.py            10-class label space (vision)
+    labels_nli.py        3-class label space (NLI; A/B/C, K=3 logprobs_to_dist)
+    target_source.py     dataset-agnostic human_probs()/embeddings() shim
+  models/
+    vllm_runner.py       VLMRunner (vision)
+    text_runner.py       TextRunner (NLI; family-aware prompts, no system role for Gemma)
+    schema.py            10-class guided JSON schema, rationale_to_text()
+    schema_nli.py        3-class guided JSON schema
+  ensemble/
+    inference.py         load_distributions(), load_rationales()
+    jsd.py               mean_pairwise_jsd()
+  mta/
+    cross_encoder.py     MTAScorer (rationale sanitizer + manual tokenization)
+  pipeline/
+    metrics.py           correlations, cost_stages, cascade_accuracy, normalise_01
+    calibration.py       isotonic / Platt fit + ECE
+    prerouter.py         skip-stage classifier on item embeddings
+    weights.py           MI / logistic alpha-beta fitting
+    figures.py, results.py
+  targets.py             human_entropy, hard_mask, BUDGET
+config/
+  models_vision.yaml, models_text.yaml
+run/
+  run_vision_inference.py, run_text_inference.py
+  compute_mta.py, report.py, run_pipeline.py
+outputs/                 raw model outputs, MTA arrays, figures (gitignored)
+```
+
+## Citation
+
+```bibtex
+@misc{kalemullah2026cac,
+  title  = {When Does Ensemble Disagreement Track Human Uncertainty?
+            A Cost-Aware Study Across Model Scale, Sample Size, and Modality},
+  author = {Kalemullah, Amaan Mohamed and H., Yixuan},
+  year   = {2026},
+  note   = {Arizona State University}
+}
+```
+
+ChaosNLI: Nie, Zhou, Bansal, *What Can We Learn from Collective Human Opinions on NLI Data?*, EMNLP 2020.
+CIFAR-10H: Peterson et al., *Human Uncertainty Makes Classification More Robust*, ICCV 2019.
