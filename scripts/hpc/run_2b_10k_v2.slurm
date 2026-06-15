@@ -12,22 +12,24 @@
 #SBATCH --output=logs/%x-%j.out
 set -uo pipefail
 
-PY=python
+module load mamba/latest
+# Initialize the conda/mamba shell hook (the step that silently no-ops in batch):
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate cac
 cd "${SLURM_SUBMIT_DIR:-$PWD}"
 export HF_HOME=/scratch/$USER/cac/.hf_cache
 export HF_HUB_OFFLINE=1
-export PYTHONNOUSERSITE=1
-unset PYTHONPATH
 
 echo "== env check =="
-$PY -c "import sys,numpy,torch,vllm; print(sys.executable); print('numpy',numpy.__version__,'torch',torch.__version__,'cuda',torch.cuda.is_available(),'vllm',vllm.__version__)" || { echo "ENV BROKEN"; exit 1; }
+which python
+python -c "import numpy, torch, vllm; print('numpy',numpy.__version__,'torch',torch.__version__,'cuda',torch.cuda.is_available(),'vllm',vllm.__version__)" || { echo "ENV BROKEN — aborting"; exit 1; }
 
 echo "== 2B ensemble (active profile), N=10000 =="
-$PY -m run.run_vision_inference --profile active --n 10000 --batch-size 64 --skip-if-exists
+python -m run.run_vision_inference --profile active --n 10000 --batch-size 64 --skip-if-exists
 
 echo "== aggregate =="
-$PY -m run.compute_mta
-$PY -m run.build_results
-$PY -m run.run_pipeline --real
-$PY -m run.report
+python -m run.compute_mta
+python -m run.build_results
+python -m run.run_pipeline --real
+python -m run.report
 echo "DONE -> outputs/results.jsonl, outputs/figures/pipeline_real.png"

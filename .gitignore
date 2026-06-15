@@ -15,3 +15,5 @@ __pycache__/
 Thumbs.db
 logs/
 .ipynb_checkpoints/
+*.tex
+cac_aaai_*
