@@ -1,0 +1,925 @@
+%File: cac_aaai_v3.tex
+\documentclass[letterpaper]{article} % DO NOT CHANGE THIS
+\usepackage[submission]{aaai2026}     % SWAP to aaai2027 for AAAI-27; keep [submission] for review
+\usepackage{times}  % DO NOT CHANGE THIS
+\usepackage{helvet} % DO NOT CHANGE THIS
+\usepackage{courier} % DO NOT CHANGE THIS
+\usepackage[hyphens]{url} % DO NOT CHANGE THIS
+\usepackage{graphicx} % DO NOT CHANGE THIS
+\urlstyle{rm} % DO NOT CHANGE THIS
+\def\UrlFont{\rm} % DO NOT CHANGE THIS
+\usepackage{natbib} % DO NOT CHANGE THIS AND DO NOT ADD ANY OPTIONS TO IT
+\usepackage{caption} % DO NOT CHANGE THIS AND DO NOT ADD ANY OPTIONS TO IT
+\frenchspacing % DO NOT CHANGE THIS
+\setlength{\pdfpagewidth}{8.5in} % DO NOT CHANGE THIS
+\setlength{\pdfpageheight}{11in} % DO NOT CHANGE THIS
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\setcounter{secnumdepth}{0}
+
+% /Title required by AAAI 2026 guidelines. (Paper title is not identifying.)
+\pdfinfo{
+/Title (Before You Trust Disagreement-Based Routing: A Router Acceptance Protocol and Its Validation Across Scale, Modality, and Domain)
+/TemplateVersion (2026.1)
+}
+
+\title{Before You Trust Disagreement-Based Routing:\\
+A Router Acceptance Protocol and Its Validation Across Scale, Modality, and Domain}
+
+% ANONYMIZED FOR DOUBLE-BLIND REVIEW.
+% Do NOT restore name/affiliation/email until the camera-ready (non-submission) build.
+\author{
+    Anonymous Submission
+}
+\affiliations{
+    Paper submitted for double-blind review
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+A popular heuristic holds that when a small, cheap ensemble of models disagrees
+on an input, that input is genuinely hard, so disagreement can route annotation,
+escalating contested items to an expensive frontier model or human. We argue this
+heuristic is trusted too readily, and turn the implicit cautionary advice of prior
+work into a concrete artifact: a \textbf{router acceptance protocol} that
+practitioners run \emph{before} deploying disagreement-based routing. The protocol
+prescribes four pre-deployment checks --- (i) selective-risk utility (AURC), not
+just correlation; (ii) a within-family capacity sweep; (iii) an
+error-\emph{independence} test across ensemble members; and (iv) a \emph{measured}
+frontier-accuracy tier rather than an assumed one --- each with a pass/fail rule.
+We validate the protocol on human label distributions and human grading across
+four datasets, two modalities, two tasks, and a capacity sweep from $0.8$B to a
+frontier model. Three findings justify the checks. First, routing utility can
+\emph{decouple} from correlation: a calibrated cascade beats its single-model
+baseline at $4.4\times$ lower cost even when the disagreement--difficulty
+correlation is modest. Second, correlation rises with capacity but
+non-monotonically, so two-point comparisons are unsafe; AURC is the more
+interpretable metric. Third, small dense models can exhibit strongly correlated errors
+($\phi{=}0.78$--$0.83$), weakening the independence assumption behind
+disagreement-based routing; genuine independence appears only at a
+mixture-of-experts model in the language setting. A frontier
+control shows its uncertainty tracks human disagreement ($r{=}0.515$) where
+small-model disagreement does not, confirmed on two human-graded datasets. We
+release the protocol as a reusable acceptance gate.
+\end{abstract}
+
+\begin{links}
+\link{Code}{https://anonymous.4open.science/r/router-acceptance-protocol-71E4/}
+\end{links}
+
+\section{Introduction}
+Supervised systems are bottlenecked by labeled data, and the labels themselves
+are imperfect: even large benchmarks built with intensive crowd effort
+\citep{deng2009imagenet} contain errors, and careful re-annotation reveals
+pervasive mistakes and genuine ambiguity in standard test sets
+\citep{northcutt2021pervasive, beyer2020imagenet}.
+A now-common practice is to pre-label new data with a capable model and reserve
+scarce human (or expensive frontier-model) effort for the items that need it.
+This reframes annotation as a \emph{routing} problem: under a fixed budget, decide
+which items a cheap labeler can be trusted to finalize and which must escalate.
+
+The hard part is the decision rule. A single model's own confidence is a weak
+proxy \citep{hendrycks2017baseline, guo2017calibration}, and it cannot separate
+``easy and certain'' from ``hard but overconfident.'' A widely held intuition
+offers an alternative: \emph{ensemble disagreement}. When several diverse models
+disagree, the input is plausibly ambiguous
+\citep{lakshminarayanan2017simple, gal2016dropout}, so disagreement might rank
+items by difficulty and trigger escalation. The intuition is attractive precisely
+because it is cheap: it asks small models a question they can answer in one
+forward pass, and it needs no labels to deploy.
+
+That cheapness is also its danger. Disagreement-based routing is easy to stand up,
+easy to demo on a small sample, and easy to \emph{trust} on the strength of a
+single encouraging correlation --- and, as we show, that trust is frequently
+misplaced. The contribution of this paper is to make the trust decision explicit.
+We promote the implicit ``check before you rely on it'' advice of prior work to a
+\textbf{first-class artifact}: a \emph{router acceptance protocol} a practitioner
+runs before deploying disagreement-based routing, with concrete checks and
+pass/fail rules. We then validate the protocol by running it ourselves across
+model scale, two modalities, and two task types, and showing that each check
+catches a real failure that a naive correlation test would have missed.
+
+The intuition is testable because the target is observable. CIFAR-10H
+\citep{peterson2019human} and ChaosNLI \citep{nie2020chaosnli} each provide
+\emph{soft human labels} --- full label distributions from $\sim\!50$--$100$
+annotators per item --- whose entropy quantifies per-item human disagreement; two
+human-graded short-answer and code-grading datasets provide per-item human score
+distributions for an open-ended second domain. We can therefore measure whether
+model disagreement tracks human difficulty, and separately whether the resulting
+routing is useful, across modality, scale, and task.
+
+\paragraph{The router acceptance protocol (lead contribution).}
+Before trusting disagreement-based routing, run four checks:
+\begin{enumerate}\itemsep2pt
+\item[\textbf{A1}] \textbf{Utility, not correlation.} Report selective risk
+(AURC) and selective accuracy under a budget, not only the
+disagreement--difficulty correlation. \emph{Pass} if the calibrated cascade
+matches or beats its single-model baseline at the target budget; a good
+correlation with no downstream win is a fail, and (as we show) a modest
+correlation with a real win is a pass.
+\item[\textbf{A2}] \textbf{Capacity sweep, not two points.} Trace the metric
+across a within-family capacity range. \emph{Fail} the ``it's a property of
+small models'' claim if it rests on a two-point contrast; the relationship is
+non-monotonic and a single pair can mislead in either direction.
+\item[\textbf{A3}] \textbf{Error independence, not just disagreement.} Measure
+the pairwise correlation of ensemble members' \emph{errors}. \emph{Fail} the
+ensemble premise if member errors are correlated --- disagreement then carries no
+independent signal and ensembling cannot help.
+\item[\textbf{A4}] \textbf{Measured frontier, not assumed.} Measure the escalation
+tier's accuracy on the actual hard items rather than assuming a ceiling (e.g.\
+$0.95$). \emph{Fail} any cost/accuracy projection built on an unmeasured frontier
+number; measured frontier accuracy is domain-specific and often far lower.
+\end{enumerate}
+
+\paragraph{Validation findings (supporting contributions).}
+\begin{enumerate}\itemsep2pt
+\item \textbf{Utility decouples from correlation (validates A1).} On
+$10{,}000$-image CIFAR-10H a calibrated cascade exceeds its best single model
+($0.965$ vs.\ $0.940$) at $4.4\times$ lower frontier cost despite a modest
+correlation ($r{=}0.32$): a router need not rank all items, only isolate the ones
+it would mislabel. A disagreement score can support effective routing even when
+its global correlation with human difficulty is modest.
+\item \textbf{Capacity is a curve, and AURC is the better axis (validates A2).}
+A within-family sweep ($0.8$B$\to$frontier) shows disagreement-tracking rises with
+scale but non-monotonically (a $4$B checkpoint is a marked outlier); selective
+risk (AURC) decreases with scale more cleanly than correlation and is the more
+interpretable acceptance metric.
+\item \textbf{Small dense models err \emph{together} (validates A3; reverses a
+prior claim).} The belief that small models are confidently wrong in
+\emph{uncorrelated} ways is false for small dense models: pairwise error
+correlation is $\phi{=}0.78$--$0.83$. Error independence appears only at a
+mixture-of-experts model. We therefore retract the uncorrelated-error claim and
+report the correlated-error finding with its evidence.
+\item \textbf{A measured frontier and a second domain (validates A4).} A frontier
+control on ChaosNLI tracks human disagreement at $r{=}0.515$ where small-model
+disagreement gives $r{\approx}0.13$; its measured accuracy on hard items
+($0.673$) is far below the $0.95$ that cost projections commonly assume. Two
+human-graded datasets (short-answer and code grading) reproduce the
+disagreement-does-not-track-difficulty null in an open-ended domain.
+\end{enumerate}
+
+\section{Related Work}
+
+\paragraph{Human label uncertainty.}
+\citet{peterson2019human} collected CIFAR-10H and showed soft human labels improve
+robustness; \citet{nie2020chaosnli} collected ChaosNLI (${\sim}100$ annotations per
+NLI example) and showed that strong models only partially recover human label
+\emph{distributions}, with accuracy collapsing on high-disagreement items.
+Re-annotation studies find ``ground-truth'' labels are often wrong or ambiguous
+\citep{northcutt2021pervasive, beyer2020imagenet}. We use the label-distribution
+entropy of both as our measure of per-item human disagreement, and extend to human
+\emph{score} distributions for open-ended grading.
+
+\paragraph{Ensembles, calibration, uncertainty.}
+Deep ensembles \citep{lakshminarayanan2017simple}, MC-dropout
+\citep{gal2016dropout}, and member disagreement \citep{kendall2017uncertainties}
+estimate epistemic uncertainty; calibration is handled by Platt/temperature
+scaling \citep{guo2017calibration, platt1999probabilistic}, isotonic regression
+\citep{zadrozny2002transforming}, and ECE \citep{naeini2015obtaining}. A standing
+assumption behind ensembling is that members make \emph{independent} errors; our
+A3 check tests that assumption directly and finds it violated for small dense
+models. Throughout this paper, \emph{disagreement} (unless qualified) means
+\emph{distributional} disagreement among member posteriors --- the mean pairwise
+Jensen--Shannon divergence defined in Table~\ref{tab:notation} --- which we keep
+distinct from label-vote disagreement and from error disagreement (the $\phi$
+correlation of error indicators in A3). Our objective is not posterior accuracy
+but the \emph{ranking} of items by human-perceived difficulty, and crucially
+\emph{whether} this distributional disagreement supports it.
+
+\paragraph{Selective prediction and cost-aware cascades.}
+Selective classifiers \citep{geifman2017selective, hendrycks2017baseline} and
+conformal methods \citep{angelopoulos2021gentle} abstain under uncertainty;
+cascades \citep{viola2001rapid} and FrugalGPT \citep{chen2023frugalgpt} invoke
+expensive models only when cheap ones seem insufficient; LLM-as-judge
+\citep{zheng2023judging} gates computation on model outputs. We adopt selective
+risk (AURC) as our headline acceptance metric and use a disagreement-triggered
+cascade as the worked system the protocol validates.
+
+\paragraph{Weak supervision and active learning.}
+Programmatic weak supervision \citep{ratner2017snorkel} and active learning
+\citep{settles2009active} prioritize annotation effort; our protocol is
+complementary, auditing when a disagreement-based difficulty estimator may be
+trusted for triage.
+
+\paragraph{Models.}
+For the within-family capacity sweep we use the Qwen3.5 family (natively
+multimodal; $0.8$B--$122$B) so that scale varies within a single backbone, removing
+the architecture confound that a cross-family ensemble would introduce. The
+cascade system additionally uses open VLMs --- Qwen2-VL \citep{wang2024qwen2vl},
+InternVL \citep{chen2024internvl}, Phi-3.5-Vision \citep{abdin2024phi3} --- and
+open LLMs (Qwen2.5, Gemma-2). Our contribution is not a new model but a protocol
+for deciding when small ensembles of such models can be trusted as uncertainty
+sensors.
+
+\paragraph{Recent routing, VLM confidence, and judge work (2024--2026).}
+LLM routing has matured into learned cost-quality trade-offs: RouteLLM
+\citep{ong2024routellm} trains a router from preference data to send easy queries
+to a weak model and hard ones to a strong model. Our setting differs in the
+trigger --- cross-model \emph{disagreement} against a human-difficulty target, not a
+learned strong-vs-weak win predictor --- and in the target, human label entropy
+rather than response preference. Recent work documents that VLMs are
+systematically miscalibrated and that verbalized confidence often misaligns with
+accuracy \citep{groot2024verbalized}, and that sampling-based uncertainty only
+partially recovers reliability \citep{zhang2024vluncertainty}. These findings are
+consistent with our small-model results and motivate the measured-frontier check
+(A4).
+
+\section{Problem Setup}
+For each item $x$ over $K$ classes (or a bounded score range), the dataset provides
+a human label/score distribution $p_h(\cdot\mid x)$ (empirically observed from
+annotators) with entropy
+\begin{equation}
+H_{\text{human}}(x) = -\sum_{k=1}^{K} p_h(k\mid x)\log p_h(k\mid x),
+\end{equation}
+which we take as our measure of per-item \emph{human disagreement}. A router
+assigns each item an action
+$a\in\{\textsf{skip},\textsf{consensus},\textsf{frontier}\}$ with costs
+$c_{\textsf{skip}}\le c_{\textsf{consensus}}\ll c_{\textsf{frontier}}$. With
+$\rho_a$ the fraction taking action $a$,
+\begin{equation}
+C = N\big(c_{\text{ens}} + \rho_{\textsf{frontier}}\,c_{\textsf{frontier}}\big),
+\label{eq:cost}
+\end{equation}
+so the saving over a frontier-only policy is $C_F/C\approx
+1/\rho_{\textsf{frontier}}$. The goal is to escalate exactly the items the
+ensemble would get wrong. Whether disagreement approximates that target ---
+and, crucially, \emph{how to decide} whether it does before deploying --- is the
+question this paper makes explicit. Table~\ref{tab:notation} fixes the notation and
+the three distinct senses of ``disagreement'' used below.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lp{0.62\columnwidth}}
+\toprule
+\textbf{Symbol / term} & \textbf{Definition} \\
+\midrule
+$p_h(\cdot\mid x)$ & Observed human label/score distribution for item $x$ over $K$ classes (or a bounded score range). \\
+$H_{\text{human}}(x)$ & Human-label entropy, $-\sum_k p_h(k\mid x)\log p_h(k\mid x)$; our measure of per-item \emph{human disagreement} (observed, not assumed difficulty). \\
+$p_m(\cdot\mid x)$ & Predictive distribution of ensemble member $m$ on item $x$. \\
+\textbf{Disagreement} & Mean pairwise Jensen--Shannon divergence among the $M$ member distributions, $\mathrm{JSD}(x)=\binom{M}{2}^{-1}\sum_{i<j}\mathrm{JS}(p_i\Vert p_j)$ (natural log). Unless stated otherwise, ``disagreement'' refers to this. \\
+$\mathrm{JS}(p\Vert q)$ & $\tfrac12 D_{\mathrm{KL}}(p\Vert m)+\tfrac12 D_{\mathrm{KL}}(q\Vert m)$, with $m=\tfrac12(p+q)$. \\
+\textbf{Correlation} & Pearson $r$ (and Spearman $\rho$) between per-item disagreement and $H_{\text{human}}$ over the $N$ items; the relationship the protocol declines to use as the \emph{sole} acceptance test. \\
+\textbf{Error indep.} & Pairwise $\phi$ coefficient between members' binary per-item \emph{error} indicators on shared items; low $\phi$ $=$ idiosyncratic errors. \\
+$s(x)$ & Escalation signal $s(x)=\alpha\,\widetilde{\mathrm{JSD}}(x)+\beta\,(1{-}\mathrm{MTA}(x))$; $\widetilde{\cdot}$ is min--max normalized, $\alpha,\beta$ set by mutual information with $H_{\text{human}}$ ($\beta{=}0$ recovers JSD-only). \\
+$\mathrm{MTA}$ & Mean textual-rationale agreement among members (sentence-embedding cosine similarity); $1{-}\mathrm{MTA}$ is rationale dissimilarity. \\
+$\mathrm{ECE}$ & Expected calibration error of the calibrated $P(\text{hard})$, $10$ equal-width bins: $\sum_b \tfrac{|B_b|}{N}\,|\mathrm{acc}(B_b)-\mathrm{conf}(B_b)|$. \\
+\textbf{False-easy rate} & Fraction of truly-hard items the pre-router admits as easy: $\#\{\text{skipped}\wedge\text{hard}\}/\#\{\text{hard}\}$. \\
+\textbf{Sel.\ acc.\ @$c$} & Accuracy on the fraction $c$ of items with lowest escalation score (the remainder escalate). \\
+$\mathrm{AURC}$ & Area under the risk--coverage curve (lower better); risk $=$ error rate at each coverage of the escalation score. \\
+$\tau,\ \rho_{\textsf{frontier}}$ & Escalation threshold; fraction escalated to the frontier tier under budget. \\
+\bottomrule
+\end{tabular}
+\caption{Notation. ``Disagreement'' denotes mean pairwise JSD unless otherwise
+specified; ``correlation'' denotes Pearson/Spearman of disagreement against
+$H_{\text{human}}$.}
+\label{tab:notation}
+\end{table}
+
+\section{The Router Acceptance Protocol}
+The protocol is a pre-deployment gate. Each check produces a pass/fail and a
+reusable artifact (a number with a confidence interval, a curve, or a matrix).
+Table~\ref{tab:protocol} summarizes the four checks as a failure-mode $\to$
+diagnostic $\to$ pass/fail rule; the criteria are specified independently of our
+results, and the parenthetical numbers are what we observed when we ran the
+protocol ourselves.
+
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{p{0.03\textwidth}p{0.22\textwidth}p{0.27\textwidth}p{0.36\textwidth}}
+\toprule
+& \textbf{Failure mode it catches} & \textbf{Diagnostic check (artifact)} & \textbf{Pass / fail criterion} \\
+\midrule
+\textbf{A1} & Trusting a correlation that yields no routing benefit (or rejecting a useful router for low $r$). & Calibrated cascade vs.\ single-model baseline; AURC and selective accuracy at the budget (risk--coverage curve). & \emph{Pass} if the calibrated cascade matches or beats the best single model at target coverage (lower AURC, $\ge$ selective accuracy). \emph{Fail} if a good $r$ produces no downstream win. \\
+\addlinespace
+\textbf{A2} & Attributing behavior to ``small models'' from a two-point contrast a non-monotone curve would contradict. & AURC and $r$ traced across a within-family capacity range (a curve, not a pair); outliers flagged. & \emph{Pass} only with a characterized trend across $\ge\!4$ capacity points. \emph{Fail} any claim resting on two points; flag any point whose AURC residual exceeds ${\sim}2\times$ the next largest. \\
+\addlinespace
+\textbf{A3} & Assuming ensemble members err independently when they fail on the same items. & Pairwise $\phi$ of member error indicators on shared items (error-correlation matrix). & \emph{Pass} if mean pairwise $\phi$ is low (idiosyncratic errors). \emph{Fail} the ensemble premise if errors are strongly correlated (here $\phi{=}0.78$--$0.83$ for small dense members). \\
+\addlinespace
+\textbf{A4} & Cost/accuracy projections built on an assumed frontier ceiling rather than a measured one. & Frontier tier's measured accuracy on the actual hard subset, with CI. & \emph{Pass} only if projections use the \emph{measured} frontier accuracy for the domain. \emph{Fail} any projection substituting an assumed ceiling (here $0.95$ assumed vs.\ $0.673$ measured). \\
+\bottomrule
+\end{tabular}
+\caption{The router acceptance protocol as a reusable gate. Each check targets a
+specific failure mode, produces a reusable artifact, and has an operational
+pass/fail rule. Criteria are specified independently of our experiments;
+parenthetical values are what we observed when running the protocol.}
+\label{tab:protocol}
+\end{table*}
+
+\paragraph{A1 --- Utility over correlation.}
+Compute the area under the risk--coverage curve (AURC) and selective accuracy at
+the target coverage, using a calibrated escalation score. \emph{Decision:} accept
+only if the calibrated cascade matches or beats its single-model baseline at the
+budget. Correlation alone is neither necessary nor sufficient (Sec.~Results, A1).
+
+\paragraph{A2 --- Capacity sweep.}
+Trace AURC and correlation across a within-family capacity range rather than a
+single small-vs-large pair. \emph{Decision:} do not attribute behavior to ``small
+models'' from two points; require a monotone or clearly-characterized trend, and
+flag outliers explicitly.
+
+\paragraph{A3 --- Error independence.}
+For the proposed ensemble members, compute the pairwise correlation
+($\phi$ coefficient) of their per-item \emph{error indicators} on shared items.
+\emph{Decision:} reject the ensemble premise if member errors are strongly
+correlated; disagreement then adds no independent information over a single member.
+
+\paragraph{A4 --- Measured frontier.}
+Measure the escalation tier's accuracy on the actual hard subset. \emph{Decision:}
+reject any cost/accuracy projection that substitutes an assumed ceiling for a
+measured one; report the measured number and its domain.
+
+\paragraph{A concrete failure the protocol catches.}
+Consider a practitioner evaluating a disagreement-based router on ChaosNLI.
+They observe a modest positive disagreement--difficulty correlation and conclude
+that disagreement is a useful proxy for difficulty; a correlation-only analysis
+would accept the router. The protocol, however, exposes two hidden failures:
+(i)~the router delivers little selective-risk benefit~(A1), and (ii)~the ensemble
+members make highly correlated errors ($\phi \approx 0.80$), violating the
+independence assumption that motivates disagreement-based routing~(A3). The
+protocol therefore \emph{rejects} a router that a correlation-only evaluation
+would have accepted.
+
+\paragraph{The disagreement-based routing pipeline under test.}
+We instantiate routing with a disagreement-based cascade: each item is run through
+$M$ small models; a distributional disagreement score (Jensen--Shannon
+divergence \citep{lin1991divergence} among per-model posteriors) is optionally
+fused with a textual rationale-dissimilarity signal
+\citep{reimers2019sentencebert}, calibrated to an escalation probability
+\citep{platt1999probabilistic, zadrozny2002transforming, naeini2015obtaining}, and
+thresholded under a frontier budget to drive a skip/consensus/frontier cascade
+(Algorithm~\ref{alg:cac}). This pipeline is the worked example the protocol audits,
+not the paper's contribution.
+
+\paragraph{Rationale agreement (MTA).}
+Beyond distributional disagreement, each member emits a short textual rationale for
+its answer. We encode rationales with a sentence-embedding model
+\citep{reimers2019sentencebert} and define \emph{mean textual agreement} (MTA) as
+the average pairwise cosine similarity among member rationales on an item; high MTA
+means members justify their answers similarly. The complement $1{-}\mathrm{MTA}$ is
+a second, text-level disagreement channel that is distinct from the
+distribution-level JSD. The escalation signal fuses the two,
+$s(x)=\alpha\,\widetilde{\mathrm{JSD}}(x)+\beta\,(1{-}\mathrm{MTA}(x))$, where the
+weights $\alpha,\beta$ are set by each channel's mutual information with
+$H_{\text{human}}$; when rationales add no information beyond the posteriors, the
+fit drives $\beta\!\to\!0$ and the signal reduces to JSD alone.
+
+\begin{algorithm}[t]
+\caption{Disagreement-based routing for an item $x$}
+\label{alg:cac}
+\begin{algorithmic}[1]
+\STATE Run ensemble $\{p_m, r_m\}_{m=1}^{M}$ on $x$
+\STATE Compute disagreement score $s(x)$ (JSD, optionally fused with rationale dissimilarity)
+\STATE $e \gets g(s(x))$ \COMMENT{calibrated escalation probability}
+\IF{pre-router marks $x$ high-confidence consensus}
+   \STATE \textbf{skip}: accept ensemble-majority label
+\ELSIF{$e \le \tau$}
+   \STATE \textbf{consensus}: accept confidence-weighted label
+\ELSE
+   \STATE \textbf{frontier}: escalate $x$
+\ENDIF
+\end{algorithmic}
+\end{algorithm}
+
+\section{Experimental Setup}
+
+\paragraph{Datasets and target.}
+\emph{Vision:} CIFAR-10H \citep{peterson2019human}, the $10{,}000$ CIFAR-10
+\citep{krizhevsky2009learning} test images with soft human labels; human-argmax
+agrees with the original labels at $0.992$, so hard items are a small tail. For the
+capacity sweep we use a frozen $450$-item subset stratified by human entropy that
+oversamples the ambiguous tail (so the disagreement question is answerable on a
+mostly-zero-entropy benchmark).
+\emph{Language:} ChaosNLI \citep{nie2020chaosnli}, the SNLI$+$MNLI subset
+($N{=}3{,}113$, three classes, ${\sim}100$ annotators each; mean human entropy
+$0.94$ bits); the capacity sweep uses a matched $450$-item stratified subset so
+every model and the frontier control are scored on identical items.
+\emph{Open-ended grading (second domain):} two human-graded datasets --- a
+short-answer grading set ($N{=}2{,}254$) and a programming-assignment grading set
+($N{=}998$ after filtering ungradeable submissions), each with multiple human
+graders per item --- provide per-item human score distributions.
+
+\paragraph{Capacity sweep.}
+Qwen3.5 at $0.8$B, $2$B, $4$B, $9$B, $27$B (dense) and $122$B
+(mixture-of-experts; $\sim\!10$B active). Each model is asked for a full
+class-probability distribution per item in one structured call, and we take its
+entropy as the model's uncertainty. Hosted endpoints serve
+$0.8$B/$27$B/$122$B; $2$B/$4$B/$9$B run locally via vLLM. The frontier control is
+Claude Sonnet~4.6.
+
+\paragraph{Cascade ensembles.}
+\emph{Vision 2B:} Qwen2-VL-2B + InternVL2-2B (the system that demonstrates A1).
+\emph{Language:} Qwen2.5-3B-Instruct + Gemma-2-2B-it for the prior-generation
+ensemble comparison.
+
+\paragraph{Metrics and decisions.}
+Pearson/Spearman of model uncertainty vs.\ $H_{\text{human}}$; \textbf{AURC}
+(area under the risk--coverage curve, lower is better) and selective accuracy at
+$50/70/90\%$ coverage as the headline utility metrics; AUROC for ranking hard
+items; pairwise error-correlation ($\phi$) for A3; single-model vs.\ cascade
+accuracy, escalated fraction, and cost reduction (Eq.~\ref{eq:cost}) for the
+system. We report bootstrap $95\%$ CIs.
+
+\paragraph{Implementation and compute.}
+vLLM constrained decoding, fixed seed, offline weights; cross-encoder stack pinned.
+The capacity-sweep models run as resumable, content-cached jobs. Experiments were
+conducted on one compute node with two NVIDIA A100 GPUs (driver version
+595.71.05, CUDA 13.2), 20 Intel Xeon Platinum 8468 CPUs, and 234\,GB RAM. Code and
+configs to be released via the anonymized repository linked above.
+
+\section{Results}
+
+\subsection{A1 --- Routing utility can decouple from correlation (CIFAR-10H)}
+At $N{=}10{,}000$ the 2B cascade reaches $0.965$, above its best single model
+($0.940$), escalating $22.8\%$ for a $4.4\times$ cost reduction at
+$\mathrm{ECE}{=}0.015$ --- despite a modest disagreement--entropy correlation
+($r{=}0.32$). A calibrated threshold fit on enough data isolates the
+sub-population the ensemble would mislabel even from a weakly-correlated score; the
+pre-router's false-easy rate falls from ${\approx}37\%$ at $N{=}500$ to $1.2\%$ at
+$N{=}10{,}000$, the mechanism behind the gain. Utility and global correlation are
+empirically distinct --- which is exactly why A1 requires the utility measurement,
+not the correlation, as the acceptance test.
+
+\subsection{A2 --- Capacity is a curve, and AURC is the cleaner axis (ChaosNLI)}
+Table~\ref{tab:sweep} reports the within-family sweep on the matched $450$-item
+ChaosNLI subset. Disagreement-tracking rises with capacity but \emph{not}
+monotonically: the smallest models barely track human disagreement
+($r{=}0.138$ at $0.8$B, $0.132$ at $2$B), the signal strengthens through the
+mid-range, and the frontier model is clearly best ($r{=}0.471$). Selective risk
+tells the cleaner story: AURC falls from $0.465$ ($0.8$B) toward $0.178$ (frontier)
+and is easier to interpret than $r$ against the zero-inflated entropy target,
+which is why the protocol makes AURC the headline (A1/A2). A $4$B checkpoint is a
+marked positive outlier (AURC $0.230$, well below the dense trend; see
+Figure~\ref{fig:curve}); we treat it as a checkpoint-specific anomaly and do not
+build claims on it, but it is precisely the kind of non-monotonicity that a
+two-point ``small vs.\ large'' comparison would misread.\footnote{The $4$B point's
+AURC residual from a log-linear fit on the other dense models is $-0.18$, roughly
+twice the next-largest residual; the upward trend with scale is robust to
+excluding it, but the magnitude of the deviation is why we flag rather than smooth
+it.} Per-model selective accuracy at $50/70/90\%$ coverage is reported in
+Table~\ref{tab:sweep}.
+
+\begin{table}[t]
+\centering
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Model} & $r$ & \textbf{AURC}$\downarrow$ & \textbf{sel@50} & \textbf{sel@70} \\
+\midrule
+Qwen3.5-0.8B            & $0.138$ & $0.465$ & $0.529$ & $0.486$ \\
+Qwen3.5-2B             & $0.132$ & $0.424$ & $0.578$ & $0.606$ \\
+Qwen3.5-4B$^{\ast}$    & $0.377$ & $\mathbf{0.230}$ & $0.787$ & $0.686$ \\
+Qwen3.5-9B             & $0.304$ & $0.306$ & $0.618$ & $0.584$ \\
+Qwen3.5-27B            & $0.271$ & $0.438$ & $0.520$ & $0.476$ \\
+Qwen3.5-122B (MoE)$^{\dagger}$ & $0.268$ & $0.387$ & $0.596$ & $0.495$ \\
+\midrule
+Frontier (Sonnet 4.6)  & $\mathbf{0.471}$ & $\mathbf{0.178}$ & --- & --- \\
+\bottomrule
+\end{tabular}%
+}
+\caption{Within-family capacity sweep (ChaosNLI, matched $450$-item subset).
+Disagreement-tracking ($r$) and selective risk (AURC, lower better) improve with
+scale but non-monotonically; AURC is the cleaner trend and the protocol's headline
+metric. $^{\ast}$$4$B is a positive outlier (see text and Fig.~\ref{fig:curve}).
+$^{\dagger}$The $122$B is a mixture-of-experts model ($\sim\!10$B active of $122$B
+total); it is reported separately and not placed on the dense-capacity trend.
+Selective-accuracy entries for the frontier are not applicable: the frontier is the
+escalation \emph{target} and answers all routed items, so it makes no selective
+decision of its own.}
+\label{tab:sweep}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_4b_outlier.png}
+\caption{Selective risk (AURC, lower is better) vs.\ dense model capacity on
+ChaosNLI. AURC improves with scale toward the frontier; the $4$B checkpoint sits
+well below the dense trend (right panel: residual roughly $2\times$ the next
+largest), and the $122$B mixture-of-experts model is shown as a separate marker
+rather than on the dense line. This is the non-monotonicity that motivates the
+capacity-sweep check (A2): a two-point comparison would misread it.}
+\label{fig:curve}
+\end{figure}
+
+\subsection{A3 --- Small dense models err \emph{together}, not independently
+(ChaosNLI)}
+The ensembling premise is that members make independent errors, so disagreement
+flags genuine difficulty. We test this directly by correlating per-item error
+indicators across the swept models on the shared $450$ items
+(Figure~\ref{fig:errcorr}). The result \textbf{reverses} the common
+``confidently wrong in uncorrelated ways'' intuition for small dense models: their
+errors are strongly correlated --- $\phi{=}0.815$ ($0.8$B vs.\ $2$B), $0.779$
+($0.8$B vs.\ $27$B), $0.828$ ($2$B vs.\ $27$B) --- i.e.\ they fail on the
+\emph{same} items, so an ensemble of them carries little independent signal and
+cannot separate hard from easy by disagreement. Error independence appears only at
+the $122$B mixture-of-experts model, whose error vector is near-uncorrelated with
+every dense model ($\phi{\in}[-0.05, 0.14]$). We therefore retract the
+uncorrelated-error claim of the prior version of this work and report the
+correlated-error finding as evidence for the A3 check: measuring error
+independence, not merely observing disagreement, is what reveals that small dense
+ensembles cannot deliver the premise.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_error_correlation.png}
+\caption{Pairwise error correlation ($\phi$) among swept models on shared ChaosNLI
+items (low $=$ idiosyncratic errors). Small dense models form a strongly-correlated
+block ($0.78$--$0.83$): they err on the same items, so disagreement among them is
+not independent evidence of difficulty. Only the $122$B mixture-of-experts model
+shows near-independent errors. This violates the ensembling premise and is the
+basis for acceptance check A3.}
+\label{fig:errcorr}
+\end{figure}
+
+\subsection{A4 --- A measured frontier, not an assumed one (ChaosNLI)}
+Cost/accuracy projections for cascades commonly assume a frontier ceiling near
+$0.95$ on escalated items. We measure it. On the stratified ChaosNLI subset the
+frontier model (Claude Sonnet~4.6), queried for a full class-probability
+distribution per item, reaches accuracy $0.673$ against the human majority --- far
+below the assumed $0.95$, and only modestly above chance on the hardest tercile.
+Critically, its \emph{uncertainty} tracks human disagreement at $r{=}0.515$
+($95\%$ CI $[0.446,0.578]$), an order of magnitude above the small models'
+$r{\approx}0.13$; across entropy terciles its mean entropy rises monotonically as
+accuracy falls, so it grows appropriately less certain on exactly the items humans
+find ambiguous (Table~\ref{tab:frontier}). Two consequences follow. First, the
+small-model failure is a property of capacity, not of the task --- a capable model
+recovers the disagreement--difficulty relationship on the same items. Second, any
+cost projection must use the \emph{measured} frontier accuracy for the target
+domain ($0.673$ here), not a generic ceiling; substituting $0.95$ would overstate
+the cascade's achievable accuracy.
+
+\begin{table}[t]
+\centering
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lccc}
+\toprule
+\textbf{System (ChaosNLI 450-subset)} & \textbf{Acc} & \textbf{corr(unc.,$H$)} & \textbf{95\% CI} \\
+\midrule
+Small models (Qwen3.5 $\le 2$B) & ${\sim}0.49$ & ${\sim}0.13$ & --- \\
+\textbf{Frontier (Sonnet 4.6)} & $\mathbf{0.673}$ & $\mathbf{0.515}$ & $\mathbf{[0.446,0.578]}$ \\
+\bottomrule
+\end{tabular}%
+}
+\caption{Measured frontier tier (A4). A frontier model's stated uncertainty tracks
+human label entropy where small-model uncertainty does not; its \emph{measured}
+accuracy on hard items ($0.673$) is far below the $0.95$ that cost projections
+commonly assume. This attributes the small-model failure to capacity, not the
+task, and supplies the measured number A4 requires.}
+\label{tab:frontier}
+\end{table}
+
+\subsection{Second domain: human-graded short-answer and code grading}
+To test whether the disagreement-does-not-track-difficulty result generalizes
+beyond classification, we evaluate two open-ended grading datasets with multiple
+human graders per item, using inter-model score disagreement as the routing signal
+and human grader spread as difficulty (Table~\ref{tab:grading}). In both, model
+disagreement barely tracks human disagreement: short-answer grading gives
+$r{=}0.090$ ($\rho{=}0.182$, $N{=}2{,}254$) and code grading gives $r{\approx}0$
+($\rho{=}0.034$, $N{=}998$). Selecting items by disagreement yields only a small
+lift over random selection ($+1$--$3\%$ on average). One honest caveat governs the
+strength of this conclusion: the grading models' own accuracy within tolerance of
+the adjudicated score is low (short-answer $0.376$; code $0.215$), so part of the
+null could reflect a weak grader rather than a property of disagreement; we report
+both the null and this limitation. The two datasets nonetheless reproduce the same
+qualitative result in a second domain, which is what the protocol's cross-domain
+re-validation prescribes.
+
+\begin{table}[t]
+\centering
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Grading dataset ($N$)} & $r$ & $\rho$ & \textbf{lift} & \textbf{grader acc} \\
+\midrule
+Short-answer ($2{,}254$) & $0.090$ & $0.182$ & ${+}1.4\%$ & $0.376$ \\
+Code grading ($998$)     & $-0.005$ & $0.034$ & ${+}1.2\%$ & $0.215$ \\
+\bottomrule
+\end{tabular}%
+}
+\caption{Open-ended grading (second domain). Model disagreement does not track
+human grading disagreement; selecting by disagreement gives only a small mean lift
+over random. ``lift'' is the mean accuracy gain over random selection across
+coverage; ``grader acc'' is model accuracy within tolerance of the adjudicated
+score (a limitation, see text).}
+\label{tab:grading}
+\end{table}
+
+\subsection{Vision capacity sweep generalizes A2, with a modality-specific
+A3 result (CIFAR-10H)}
+We repeat the within-family capacity sweep on the multimodal CIFAR-10H track
+(Qwen3.5 $0.8$B--$27$B; $2$B/$4$B/$9$B served locally via vLLM) on the same
+$450$-item stratified subset used elsewhere, to test whether the language-track
+findings (A2 capacity curve, A3 error correlation) hold across modality. The
+$122$B point is excluded: the hosted endpoint for this model is
+text-only and rejects image inputs, so it cannot be placed on the vision curve.
+For Qwen3.5-27B, $224/450$ items returned a parseable distribution (the remainder
+exhausted the token budget on reasoning before emitting an answer); we report its
+metrics over these $224$ items and flag the smaller sample.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Model} & $r$ & \textbf{AURC}$\downarrow$ & \textbf{AUROC} & \textbf{sel@70} \\
+\midrule
+Qwen3.5-0.8B & $0.137$ & $0.331$ & $0.580$ & $0.692$ \\
+Qwen3.5-2B   & $0.376$ & $0.137$ & $0.682$ & $0.876$ \\
+Qwen3.5-4B   & $0.447$ & $0.137$ & $0.781$ & $0.829$ \\
+Qwen3.5-9B   & $\mathbf{0.529}$ & $\mathbf{0.098}$ & $\mathbf{0.804}$ & $0.857$ \\
+Qwen3.5-27B$^{\ddagger}$ & $\mathbf{0.547}$ & $0.206$ & $0.781$ & $0.651$ \\
+\bottomrule
+\end{tabular}
+\caption{Within-family capacity sweep on CIFAR-10H (matched $450$-item subset; the
+$122$B endpoint is text-only and excluded). Disagreement-tracking ($r$) rises
+\emph{monotonically} with scale, $0.137\to0.547$, and AUROC rises from $0.580$ to
+a peak of $0.804$ at $9$B; AURC improves correspondingly from $0.331$ to $0.098$.
+$^{\ddagger}$$27$B is computed over $224/450$ parseable items (see text); its
+AURC uptick relative to $9$B is consistent with this smaller, less-stable sample
+rather than a capability regression.}
+\label{tab:vision_sweep}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_capacity_curve_vision.png}
+\caption{CIFAR-10H capacity curve: disagreement--$H_{\text{human}}$ correlation
+($r$) and AUROC rise with scale, monotonically for $r$. Unlike the ChaosNLI curve
+(Fig.~\ref{fig:curve}), the $4$B checkpoint sits \emph{on} the trend here rather
+than as a positive outlier --- the $4$B anomaly observed in A2 is therefore
+checkpoint- and modality-specific, not a general property of this model size.}
+\label{fig:vision_curve}
+\end{figure}
+
+\paragraph{A2 generalizes cleanly to vision.} The capacity-tracking relationship
+that was non-monotonic on ChaosNLI (Table~\ref{tab:sweep}) is \emph{monotonic} on
+CIFAR-10H: $r$ rises at every step from $0.8$B to $27$B
+(Figure~\ref{fig:vision_curve}), and AUROC peaks at $9$B ($0.804$) with the $27$B
+dip attributable to its reduced parseable sample. Notably, the $4$B checkpoint that
+was a marked positive \emph{outlier} on ChaosNLI (Sec.~A2; Fig.~\ref{fig:curve}) is
+squarely on-trend here ($r{=}0.447$, between $2$B's $0.376$ and $9$B's $0.529$).
+This is itself evidence for A2's prescription: a capacity-sweep finding from one
+modality (the $4$B anomaly) does not transfer to another, so claims built on a
+single modality --- like claims built on two capacity points --- require
+re-validation before being trusted.
+
+\paragraph{A3 does not generalize: vision errors are markedly less correlated.}
+Repeating the A3 diagnostic on the five vision points (Figure~\ref{fig:errcorr_vision})
+gives a strikingly different picture than ChaosNLI. Pairwise error correlation
+among the small dense vision models ranges $\phi{\in}[0.08, 0.48]$ --- the
+$0.8$B--$2$B pair is nearly independent ($\phi{=}0.08$), and even the largest
+pairwise value ($4$B--$27$B, $\phi{=}0.48$) is below the \emph{smallest} value in
+the ChaosNLI small-dense block ($\phi{=}0.78$). The strongly-correlated
+``small dense models err together'' block that drove the A3 finding on ChaosNLI
+(Sec.~A3; Fig.~\ref{fig:errcorr}) is therefore \textbf{not} a general property of
+small dense models: it is, at least partly, a language-task-specific result. We
+report this as a second instance of the same methodological point as the $4$B
+case above --- an A3 conclusion drawn from one modality should not be assumed to
+hold in another --- and leave a mechanistic explanation (e.g.\ whether CIFAR-10's
+coarser $10$-way label space simply admits more ways for small models to differ)
+to future work.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_error_correlation_vision.png}
+\caption{Pairwise error correlation ($\phi$) among the five CIFAR-10H capacity
+points (the $122$B is excluded, as in Table~\ref{tab:vision_sweep}). Compare to
+Figure~\ref{fig:errcorr}: vision errors are markedly less correlated across the
+board ($\phi{\le}0.48$), so the ChaosNLI A3 finding (small dense models err
+together, $\phi{=}0.78$--$0.83$) does not replicate in this modality.}
+\label{fig:errcorr_vision}
+\end{figure}
+
+\section{Discussion}
+
+\paragraph{Correlation is the wrong acceptance test for a router.}
+A naive deployment decision reads a single correlation and trusts it. Our results
+show why that fails in both directions: CIFAR at scale has a modest correlation yet
+routes well (A1), while small-model NLI has a near-zero correlation \emph{and}
+correlated member errors (A3) so it cannot route at all. The protocol replaces the
+single-number test with utility (AURC/selective accuracy), a capacity curve,
+error-independence, and a measured frontier.
+
+\paragraph{When does disagreement-as-difficulty hold?}
+Our results place it in a narrow regime: it requires members whose \emph{errors}
+are actually independent (which small dense models are not, A3), enough capacity to
+track human ambiguity at all (a curve, not a point, A2), and a calibrated operating
+point where utility materializes (A1). The frontier control sharpens the boundary:
+language is not intrinsically hostile to the signal --- a capable model tracks human
+disagreement on the same items --- but the cost-saving premise is to route with
+\emph{cheap} models, and at that price point the signal and the error-independence
+both fail. The regime is jointly defined by capacity, modality, and the
+member-independence the ensemble premise assumes.
+
+\section{Broader Impact}
+Routing contested items toward human or frontier review rather than silently
+auto-labeling them can reduce label-error propagation
+\citep{northcutt2021pervasive}. The same machinery could be tuned to minimize
+oversight for cost; we frame the frontier budget as a quality lever and the
+acceptance protocol as a guard against deploying a difficulty signal that does not
+exist. A difficulty signal calibrated on one annotator pool may mis-prioritize on
+populations whose ambiguity differs, so the calibrator should be re-fit per domain
+and re-validated per modality before being trusted.
+
+\section{Limitations and Future Work}
+(i)~The capacity sweep elicits a stated distribution per model rather than a
+sampled one; sampling at temperature returned near-identical forced labels and
+carried no uncertainty, so the stated distribution is the standard
+ChaosNLI-style comparison, but a multi-model frontier panel would tighten the A4
+attribution. (ii)~The $4$B outlier is flagged, not explained; a calibration- or
+thinking-budget analysis of that checkpoint is future work. (iii)~The grading
+nulls are partly limited by low grader accuracy (Table~\ref{tab:grading}); a
+stronger grader would test whether the disagreement null persists. (iv)~The CIFAR
+and prior-generation cascade results use earlier model families
+(Qwen2-VL/2.5-class) than the Qwen3.5 capacity sweep; we present them as
+complementary evidence across model generations, and a single-generation
+end-to-end replication is the cleanest next step. (v)~The vision capacity sweep is
+now complete and generalizes A2 cleanly (a monotone curve, with the $4$B checkpoint
+on-trend) but not A3 (the small-dense correlated-error block does not replicate on
+CIFAR-10H); we read this as evidence that A3 conclusions are domain-specific until
+a mechanistic account is established, rather than evidence against the protocol
+itself. (vi)~Cost is measured
+in frontier-call units; an end-to-end dollar/wall-clock accounting would
+strengthen the cost claims.
+
+\section{Conclusion}
+The intuition that small-ensemble disagreement tracks human difficulty is trusted
+too readily. We turn the implicit ``check first'' advice into a concrete router
+acceptance protocol --- utility over correlation, a capacity curve over two points,
+error-independence over mere disagreement, and a measured frontier over an assumed
+one --- and validate each check against human label and score distributions across
+two modalities and two task types. Routing utility can decouple from correlation;
+disagreement-tracking is a non-monotone curve in capacity for which AURC is the
+cleaner axis; small dense models tend to err \emph{together} rather than independently
+in the language setting, a result that does not fully replicate in vision; and a measured frontier tracks human difficulty where
+small models do not, at an accuracy far below the assumed ceiling. We recommend
+that disagreement-based routing be accepted only after passing these checks, and we
+release them as a reusable gate.
+
+\begin{thebibliography}{}
+
+\bibitem[Abdin et~al.(2024)]{abdin2024phi3}
+Abdin, M.; et~al. 2024.
+\newblock Phi-3 Technical Report.
+\newblock \emph{arXiv:2404.14219}.
+
+\bibitem[Angelopoulos and Bates(2021)]{angelopoulos2021gentle}
+Angelopoulos, A.~N.; and Bates, S. 2021.
+\newblock A Gentle Introduction to Conformal Prediction.
+\newblock \emph{arXiv:2107.07511}.
+
+\bibitem[Beyer et~al.(2020)]{beyer2020imagenet}
+Beyer, L.; H\'enaff, O.~J.; Kolesnikov, A.; Zhai, X.; and van~den Oord, A. 2020.
+\newblock Are We Done with ImageNet?
+\newblock \emph{arXiv:2006.07159}.
+
+\bibitem[Chen et~al.(2024)]{chen2024internvl}
+Chen, Z.; et~al. 2024.
+\newblock InternVL: Scaling Up Vision Foundation Models.
+\newblock In \emph{CVPR}.
+
+\bibitem[Chen, Zaharia, and Zou(2023)]{chen2023frugalgpt}
+Chen, L.; Zaharia, M.; and Zou, J. 2023.
+\newblock FrugalGPT.
+\newblock \emph{arXiv:2305.05176}.
+
+\bibitem[Deng et~al.(2009)]{deng2009imagenet}
+Deng, J.; Dong, W.; Socher, R.; Li, L.-J.; Li, K.; and Fei-Fei, L. 2009.
+\newblock ImageNet: A Large-Scale Hierarchical Image Database.
+\newblock In \emph{CVPR}, 248--255.
+
+\bibitem[Gal and Ghahramani(2016)]{gal2016dropout}
+Gal, Y.; and Ghahramani, Z. 2016.
+\newblock Dropout as a Bayesian Approximation.
+\newblock In \emph{ICML}, 1050--1059.
+
+\bibitem[Geifman and El-Yaniv(2017)]{geifman2017selective}
+Geifman, Y.; and El-Yaniv, R. 2017.
+\newblock Selective Classification for Deep Neural Networks.
+\newblock In \emph{NeurIPS}.
+
+\bibitem[Groot and Valdenegro-Toro(2024)]{groot2024verbalized}
+Groot, T.; and Valdenegro-Toro, M. 2024.
+\newblock Overconfidence is Key: Verbalized Uncertainty Evaluation in Large
+Language and Vision-Language Models.
+\newblock In \emph{Proc.\ 4th Workshop on Trustworthy NLP (TrustNLP @ NAACL)}, 145--171.
+
+\bibitem[Guo et~al.(2017)]{guo2017calibration}
+Guo, C.; Pleiss, G.; Sun, Y.; and Weinberger, K.~Q. 2017.
+\newblock On Calibration of Modern Neural Networks.
+\newblock In \emph{ICML}, 1321--1330.
+
+\bibitem[Hendrycks and Gimpel(2017)]{hendrycks2017baseline}
+Hendrycks, D.; and Gimpel, K. 2017.
+\newblock A Baseline for Detecting Misclassified and Out-of-Distribution Examples.
+\newblock In \emph{ICLR}.
+
+\bibitem[Kendall and Gal(2017)]{kendall2017uncertainties}
+Kendall, A.; and Gal, Y. 2017.
+\newblock What Uncertainties Do We Need in Bayesian Deep Learning for Computer Vision?
+\newblock In \emph{NeurIPS}.
+
+\bibitem[Krizhevsky(2009)]{krizhevsky2009learning}
+Krizhevsky, A. 2009.
+\newblock Learning Multiple Layers of Features from Tiny Images.
+\newblock Tech.\ report, University of Toronto.
+
+\bibitem[Lakshminarayanan, Pritzel, and Blundell(2017)]{lakshminarayanan2017simple}
+Lakshminarayanan, B.; Pritzel, A.; and Blundell, C. 2017.
+\newblock Simple and Scalable Predictive Uncertainty Estimation Using Deep Ensembles.
+\newblock In \emph{NeurIPS}.
+
+\bibitem[Lin(1991)]{lin1991divergence}
+Lin, J. 1991.
+\newblock Divergence Measures Based on the Shannon Entropy.
+\newblock \emph{IEEE Trans.\ Information Theory}, 37(1): 145--151.
+
+\bibitem[Naeini, Cooper, and Hauskrecht(2015)]{naeini2015obtaining}
+Naeini, M.~P.; Cooper, G.~F.; and Hauskrecht, M. 2015.
+\newblock Obtaining Well Calibrated Probabilities Using Bayesian Binning.
+\newblock In \emph{AAAI}.
+
+\bibitem[Nie, Zhou, and Bansal(2020)]{nie2020chaosnli}
+Nie, Y.; Zhou, X.; and Bansal, M. 2020.
+\newblock What Can We Learn from Collective Human Opinions on Natural Language
+Inference Data?
+\newblock In \emph{EMNLP}.
+
+\bibitem[Northcutt, Athalye, and Mueller(2021)]{northcutt2021pervasive}
+Northcutt, C.~G.; Athalye, A.; and Mueller, J. 2021.
+\newblock Pervasive Label Errors in Test Sets Destabilize ML Benchmarks.
+\newblock In \emph{NeurIPS Datasets and Benchmarks}.
+
+\bibitem[Ong et~al.(2024)]{ong2024routellm}
+Ong, I.; Almahairi, A.; Wu, V.; Chiang, W.-L.; Wu, T.; Gonzalez, J.~E.;
+Kadous, M.~W.; and Stoica, I. 2024.
+\newblock RouteLLM: Learning to Route LLMs with Preference Data.
+\newblock \emph{arXiv:2406.18665}.
+
+\bibitem[Peterson et~al.(2019)]{peterson2019human}
+Peterson, J.~C.; Battleday, R.~M.; Griffiths, T.~L.; and Russakovsky, O. 2019.
+\newblock Human Uncertainty Makes Classification More Robust.
+\newblock In \emph{ICCV}, 9617--9626.
+
+\bibitem[Platt(1999)]{platt1999probabilistic}
+Platt, J.~C. 1999.
+\newblock Probabilistic Outputs for Support Vector Machines.
+\newblock In \emph{Advances in Large Margin Classifiers}, 61--74.
+
+\bibitem[Ratner et~al.(2017)]{ratner2017snorkel}
+Ratner, A.; Bach, S.~H.; Ehrenberg, H.; Fries, J.; Wu, S.; and R\'e, C. 2017.
+\newblock Snorkel: Rapid Training Data Creation with Weak Supervision.
+\newblock \emph{PVLDB}, 11(3): 269--282.
+
+\bibitem[Reimers and Gurevych(2019)]{reimers2019sentencebert}
+Reimers, N.; and Gurevych, I. 2019.
+\newblock Sentence-BERT.
+\newblock In \emph{EMNLP}, 3982--3992.
+
+\bibitem[Settles(2009)]{settles2009active}
+Settles, B. 2009.
+\newblock Active Learning Literature Survey.
+\newblock Tech.\ report 1648, Univ.\ of Wisconsin--Madison.
+
+\bibitem[Viola and Jones(2001)]{viola2001rapid}
+Viola, P.; and Jones, M. 2001.
+\newblock Rapid Object Detection Using a Boosted Cascade of Simple Features.
+\newblock In \emph{CVPR}.
+
+\bibitem[Wang et~al.(2024)]{wang2024qwen2vl}
+Wang, P.; et~al. 2024.
+\newblock Qwen2-VL.
+\newblock \emph{arXiv:2409.12191}.
+
+\bibitem[Zadrozny and Elkan(2002)]{zadrozny2002transforming}
+Zadrozny, B.; and Elkan, C. 2002.
+\newblock Transforming Classifier Scores into Accurate Multiclass Probability Estimates.
+\newblock In \emph{KDD}, 694--699.
+
+\bibitem[Zhang, Zhang, and Zheng(2024)]{zhang2024vluncertainty}
+Zhang, R.; Zhang, H.; and Zheng, Z. 2024.
+\newblock VL-Uncertainty: Detecting Hallucination in Large Vision-Language
+Models via Uncertainty Estimation.
+\newblock \emph{arXiv:2411.11919}.
+
+\bibitem[Zheng et~al.(2023)]{zheng2023judging}
+Zheng, L.; et~al. 2023.
+\newblock Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena.
+\newblock In \emph{NeurIPS Datasets and Benchmarks}.
+
+\end{thebibliography}
+
+\end{document}
