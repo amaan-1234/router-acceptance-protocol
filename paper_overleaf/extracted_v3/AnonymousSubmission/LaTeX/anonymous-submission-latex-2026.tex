@@ -73,7 +73,7 @@ release the protocol as a reusable acceptance gate.
 \end{abstract}
 
 \begin{links}
-\link{Code}{https://anonymous.4open.science/r/router-acceptance-protocol-71E4/}
+\link{Code}{\url{https://anonymous.4open.science/r/router-acceptance-protocol-71E4/}}
 \end{links}
 
 \section{Introduction}
@@ -162,7 +162,8 @@ report the correlated-error finding with its evidence.
 \item \textbf{A measured frontier and a second domain (validates A4).} A frontier
 control on ChaosNLI tracks human disagreement at $r{=}0.515$ where small-model
 disagreement gives $r{\approx}0.13$; its measured accuracy on hard items
-($0.673$) is far below the $0.95$ that cost projections commonly assume. Two
+($0.673$) is far below an illustrative $0.95$ ceiling that cost projections
+might otherwise assume. Two
 human-graded datasets (short-answer and code grading) reproduce the
 disagreement-does-not-track-difficulty null in an open-ended domain.
 \end{enumerate}
@@ -185,7 +186,8 @@ Deep ensembles \citep{lakshminarayanan2017simple}, MC-dropout
 estimate epistemic uncertainty; calibration is handled by Platt/temperature
 scaling \citep{guo2017calibration, platt1999probabilistic}, isotonic regression
 \citep{zadrozny2002transforming}, and ECE \citep{naeini2015obtaining}. A standing
-assumption behind ensembling is that members make \emph{independent} errors; our
+assumption behind ensembling is that members make \emph{independent} errors
+\citep{dietterich2000ensemble}; our
 A3 check tests that assumption directly and finds it violated for small dense
 models. Throughout this paper, \emph{disagreement} (unless qualified) means
 \emph{distributional} disagreement among member posteriors --- the mean pairwise
@@ -574,8 +576,8 @@ Small models (Qwen3.5 $\le 2$B) & ${\sim}0.49$ & ${\sim}0.13$ & --- \\
 }
 \caption{Measured frontier tier (A4). A frontier model's stated uncertainty tracks
 human label entropy where small-model uncertainty does not; its \emph{measured}
-accuracy on hard items ($0.673$) is far below the $0.95$ that cost projections
-commonly assume. This attributes the small-model failure to capacity, not the
+accuracy on hard items ($0.673$) is far below an illustrative $0.95$ ceiling
+that cost projections might otherwise assume. This attributes the small-model failure to capacity, not the
 task, and supplies the measured number A4 requires.}
 \label{tab:frontier}
 \end{table}
@@ -788,13 +790,20 @@ Beyer, L.; H\'enaff, O.~J.; Kolesnikov, A.; Zhai, X.; and van~den Oord, A. 2020.
 
 \bibitem[Chen et~al.(2024)]{chen2024internvl}
 Chen, Z.; et~al. 2024.
-\newblock InternVL: Scaling Up Vision Foundation Models.
+\newblock InternVL: Scaling Up Vision Foundation Models and Aligning for
+Generic Visual-Linguistic Tasks.
 \newblock In \emph{CVPR}.
 
 \bibitem[Chen, Zaharia, and Zou(2023)]{chen2023frugalgpt}
 Chen, L.; Zaharia, M.; and Zou, J. 2023.
 \newblock FrugalGPT.
 \newblock \emph{arXiv:2305.05176}.
+
+\bibitem[Dietterich(2000)]{dietterich2000ensemble}
+Dietterich, T.~G. 2000.
+\newblock Ensemble Methods in Machine Learning.
+\newblock In \emph{Multiple Classifier Systems (MCS 2000)}, Lecture Notes in
+Computer Science vol.\ 1857, 1--15. Springer.
 
 \bibitem[Deng et~al.(2009)]{deng2009imagenet}
 Deng, J.; Dong, W.; Socher, R.; Li, L.-J.; Li, K.; and Fei-Fei, L. 2009.
