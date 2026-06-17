@@ -631,41 +631,6 @@ For Qwen3.5-27B, $224/450$ items returned a parseable distribution (the remainde
 exhausted the token budget on reasoning before emitting an answer); we report its
 metrics over these $224$ items and flag the smaller sample.
 
-\begin{table}[t]
-\centering
-\small
-\begin{tabular}{lcccc}
-\toprule
-\textbf{Model} & $r$ & \textbf{AURC}$\downarrow$ & \textbf{AUROC} & \textbf{sel@70} \\
-\midrule
-Qwen3.5-0.8B & $0.137$ & $0.331$ & $0.580$ & $0.692$ \\
-Qwen3.5-2B   & $0.376$ & $0.137$ & $0.682$ & $0.876$ \\
-Qwen3.5-4B   & $0.447$ & $0.137$ & $0.781$ & $0.829$ \\
-Qwen3.5-9B   & $\mathbf{0.529}$ & $\mathbf{0.098}$ & $\mathbf{0.804}$ & $0.857$ \\
-Qwen3.5-27B$^{\ddagger}$ & $\mathbf{0.547}$ & $0.206$ & $0.781$ & $0.651$ \\
-\bottomrule
-\end{tabular}
-\caption{Within-family capacity sweep on CIFAR-10H (matched $450$-item subset; the
-$122$B endpoint is text-only and excluded). Disagreement-tracking ($r$) rises
-\emph{monotonically} with scale, $0.137\to0.547$, and AUROC rises from $0.580$ to
-a peak of $0.804$ at $9$B; AURC improves correspondingly from $0.331$ to $0.098$.
-$^{\ddagger}$$27$B is computed over $224/450$ parseable items (see text); its
-AURC uptick relative to $9$B is consistent with this smaller, less-stable sample
-rather than a capability regression.}
-\label{tab:vision_sweep}
-\end{table}
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=\columnwidth]{fig_capacity_curve_vision.png}
-\caption{CIFAR-10H capacity curve: disagreement--$H_{\text{human}}$ correlation
-($r$) and AUROC rise with scale, monotonically for $r$. Unlike the ChaosNLI curve
-(Fig.~\ref{fig:curve}), the $4$B checkpoint sits \emph{on} the trend here rather
-than as a positive outlier --- the $4$B anomaly observed in A2 is therefore
-checkpoint- and modality-specific, not a general property of this model size.}
-\label{fig:vision_curve}
-\end{figure}
-
 \paragraph{A2 generalizes cleanly to vision.} The capacity-tracking relationship
 that was non-monotonic on ChaosNLI (Table~\ref{tab:sweep}) is \emph{monotonic} on
 CIFAR-10H: $r$ rises at every step from $0.8$B to $27$B
@@ -693,17 +658,6 @@ case above --- an A3 conclusion drawn from one modality should not be assumed to
 hold in another --- and leave a mechanistic explanation (e.g.\ whether CIFAR-10's
 coarser $10$-way label space simply admits more ways for small models to differ)
 to future work.
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=\columnwidth]{fig_error_correlation_vision.png}
-\caption{Pairwise error correlation ($\phi$) among the five CIFAR-10H capacity
-points (the $122$B is excluded, as in Table~\ref{tab:vision_sweep}). Compare to
-Figure~\ref{fig:errcorr}: vision errors are markedly less correlated across the
-board ($\phi{\le}0.48$), so the ChaosNLI A3 finding (small dense models err
-together, $\phi{=}0.78$--$0.83$) does not replicate in this modality.}
-\label{fig:errcorr_vision}
-\end{figure}
 
 \section{Discussion}
 
@@ -770,6 +724,55 @@ in the language setting, a result that does not fully replicate in vision; and a
 small models do not, at an accuracy far below the assumed ceiling. We recommend
 that disagreement-based routing be accepted only after passing these checks, and we
 release them as a reusable gate.
+
+\appendix
+\section*{Supplementary Figures and Tables}
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Model} & $r$ & \textbf{AURC}$\downarrow$ & \textbf{AUROC} & \textbf{sel@70} \\
+\midrule
+Qwen3.5-0.8B & $0.137$ & $0.331$ & $0.580$ & $0.692$ \\
+Qwen3.5-2B   & $0.376$ & $0.137$ & $0.682$ & $0.876$ \\
+Qwen3.5-4B   & $0.447$ & $0.137$ & $0.781$ & $0.829$ \\
+Qwen3.5-9B   & $\mathbf{0.529}$ & $\mathbf{0.098}$ & $\mathbf{0.804}$ & $0.857$ \\
+Qwen3.5-27B$^{\ddagger}$ & $\mathbf{0.547}$ & $0.206$ & $0.781$ & $0.651$ \\
+\bottomrule
+\end{tabular}
+\caption{Within-family capacity sweep on CIFAR-10H (matched $450$-item subset; the
+$122$B endpoint is text-only and excluded). Disagreement-tracking ($r$) rises
+\emph{monotonically} with scale, $0.137\to0.547$, and AUROC rises from $0.580$ to
+a peak of $0.804$ at $9$B; AURC improves correspondingly from $0.331$ to $0.098$.
+$^{\ddagger}$$27$B is computed over $224/450$ parseable items (see text); its
+AURC uptick relative to $9$B is consistent with this smaller, less-stable sample
+rather than a capability regression.}
+\label{tab:vision_sweep}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_capacity_curve_vision.png}
+\caption{CIFAR-10H capacity curve: disagreement--$H_{\text{human}}$ correlation
+($r$) and AUROC rise with scale, monotonically for $r$. Unlike the ChaosNLI curve
+(Fig.~\ref{fig:curve}), the $4$B checkpoint sits \emph{on} the trend here rather
+than as a positive outlier --- the $4$B anomaly observed in A2 is therefore
+checkpoint- and modality-specific, not a general property of this model size.}
+\label{fig:vision_curve}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_error_correlation_vision.png}
+\caption{Pairwise error correlation ($\phi$) among the five CIFAR-10H capacity
+points (the $122$B is excluded, as in Table~\ref{tab:vision_sweep}). Compare to
+Figure~\ref{fig:errcorr}: vision errors are markedly less correlated across the
+board ($\phi{\le}0.48$), so the ChaosNLI A3 finding (small dense models err
+together, $\phi{=}0.78$--$0.83$) does not replicate in this modality.}
+\label{fig:errcorr_vision}
+\end{figure}
 
 \begin{thebibliography}{}
 
