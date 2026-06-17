@@ -647,6 +647,12 @@ This is itself evidence for A2's prescription: a capacity-sweep finding from one
 modality (the $4$B anomaly) does not transfer to another, so claims built on a
 single modality --- like claims built on two capacity points --- require
 re-validation before being trusted.
+As a cross-family check, Gemma4-31B ($r{=}0.545$, AURC$=0.174$) and
+Qwen3.6-27B ($r{=}0.486$, AURC$=0.152$) both land near the top of the
+vision correlation range (Table~\ref{tab:vision_sweep}), consistent with
+the general trend that more capable models track human disagreement better
+and confirming that the A2 capacity trend is not an artefact of the Qwen3.5
+backbone.
 
 \paragraph{A3 does not generalize: vision errors are markedly less correlated.}
 Repeating the A3 diagnostic on the five vision points (Figure~\ref{fig:errcorr_vision})
@@ -663,6 +669,13 @@ case above --- an A3 conclusion drawn from one modality should not be assumed to
 hold in another --- and leave a mechanistic explanation (e.g.\ whether CIFAR-10's
 coarser $10$-way label space simply admits more ways for small models to differ)
 to future work.
+Cross-family models reinforce this picture: Gemma4-31B and Qwen3.6-27B show
+moderate pairwise $\phi$ with the Qwen3.5 vision sweep models
+($\phi{\in}[0.30, 0.45]$) --- well below the ChaosNLI small-dense block
+($\phi{=}0.78$--$0.83$) but above the nearly-independent $0.8$B--$2$B
+Qwen3.5 pair ($\phi{=}0.08$), consistent with a mixed-correlation regime
+in the vision setting rather than the tight correlated-error block seen in
+language.
 
 \section{Discussion}
 
