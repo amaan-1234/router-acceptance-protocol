@@ -481,12 +481,16 @@ Table~\ref{tab:sweep}.
 \midrule
 Qwen3.5-0.8B            & $0.138$ & $0.465$ & $0.529$ & $0.486$ \\
 Qwen3.5-2B             & $0.132$ & $0.424$ & $0.578$ & $0.606$ \\
-Qwen3.5-4B$^{\ast}$    & $0.377$ & $\mathbf{0.230}$ & $0.787$ & $0.686$ \\
+Qwen3.5-4B$^{\ast}$    & $0.377$ & $0.230$ & $0.787$ & $0.686$ \\
 Qwen3.5-9B             & $0.304$ & $0.306$ & $0.618$ & $0.584$ \\
 Qwen3.5-27B            & $0.271$ & $0.438$ & $0.520$ & $0.476$ \\
 Qwen3.5-122B (MoE)$^{\dagger}$ & $0.268$ & $0.387$ & $0.596$ & $0.495$ \\
 \midrule
-Frontier (Sonnet 4.6)  & $\mathbf{0.471}$ & $\mathbf{0.178}$ & --- & --- \\
+Gemma4-E2B$^{\S}$   & $0.150$ & $0.375$ & $0.644$ & $0.600$ \\
+Gemma4-31B$^{\S}$   & $0.383$ & $0.158$ & $0.822$ & $0.813$ \\
+Qwen3.6-27B$^{\S}$  & $0.352$ & $\mathbf{0.146}$ & $0.853$ & $0.810$ \\
+\midrule
+Frontier (Sonnet 4.6)  & $\mathbf{0.471}$ & $0.178$ & --- & --- \\
 \bottomrule
 \end{tabular}%
 }
@@ -498,7 +502,8 @@ $^{\dagger}$The $122$B is a mixture-of-experts model ($\sim\!10$B active of $122
 total); it is reported separately and not placed on the dense-capacity trend.
 Selective-accuracy entries for the frontier are not applicable: the frontier is the
 escalation \emph{target} and answers all routed items, so it makes no selective
-decision of its own.}
+decision of its own.
+$^{\S}$Cross-family comparison model; not placed on the Qwen3.5 capacity curve.}
 \label{tab:sweep}
 \end{table}
 
@@ -740,6 +745,9 @@ Qwen3.5-2B   & $0.376$ & $0.137$ & $0.682$ & $0.876$ \\
 Qwen3.5-4B   & $0.447$ & $0.137$ & $0.781$ & $0.829$ \\
 Qwen3.5-9B   & $\mathbf{0.529}$ & $\mathbf{0.098}$ & $\mathbf{0.804}$ & $0.857$ \\
 Qwen3.5-27B$^{\ddagger}$ & $\mathbf{0.547}$ & $0.206$ & $0.781$ & $0.651$ \\
+\midrule
+Gemma4-31B$^{\S}$   & $0.545$ & $0.174$ & $0.776$ & $0.717$ \\
+Qwen3.6-27B$^{\S}$  & $0.486$ & $0.152$ & $0.769$ & $0.771$ \\
 \bottomrule
 \end{tabular}
 \caption{Within-family capacity sweep on CIFAR-10H (matched $450$-item subset; the
@@ -748,7 +756,8 @@ $122$B endpoint is text-only and excluded). Disagreement-tracking ($r$) rises
 a peak of $0.804$ at $9$B; AURC improves correspondingly from $0.331$ to $0.098$.
 $^{\ddagger}$$27$B is computed over $224/450$ parseable items (see text); its
 AURC uptick relative to $9$B is consistent with this smaller, less-stable sample
-rather than a capability regression.}
+rather than a capability regression.
+$^{\S}$Cross-family comparison model; not placed on the Qwen3.5 capacity curve.}
 \label{tab:vision_sweep}
 \end{table}
 
