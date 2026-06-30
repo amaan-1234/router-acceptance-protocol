@@ -96,12 +96,10 @@ def _parse_dist(text: str) -> np.ndarray | None:
     cands = re.findall(r"[\{\[][^\{\}\[\]]*[\}\]]", t, re.DOTALL)
     for cand in reversed(cands):
         body = cand.strip().strip("[]{}")
-        # rebuild as a dict from "key": value pairs, regardless of original wrapper
         pairs = re.findall(r'"([a-z_]+)"\s*:\s*([0-9]*\.?[0-9]+)', body)
         if not pairs:
             continue
         d = {k: float(v) for k, v in pairs}
-        # require at least a majority of classes present; fill the rest with 0
         present = sum(1 for c in CIFAR10_CLASSES if c in d)
         if present < 6:
             continue
@@ -109,10 +107,22 @@ def _parse_dist(text: str) -> np.ndarray | None:
         s = v.sum()
         if np.isfinite(s) and s > 0:
             return v / s
+    # FALLBACK: prose/markdown "class: prob" anywhere in the trace (handles reasoning
+    # traces that state a partial distribution without a closing JSON object). Take the
+    # LAST stated value per class; accept >=3 classes with mass; renormalize.
+    last = {}
+    for m in re.finditer(r'(airplane|automobile|bird|cat|deer|dog|frog|horse|ship|truck)\b[^0-9\n]{0,12}([01]?\.[0-9]+)', t, re.I):
+        last[m.group(1).lower()] = float(m.group(2))
+    last = {k: v for k, v in last.items() if v > 0}
+    if len(last) >= 3:
+        v = np.array([last.get(c, 0.0) for c in CIFAR10_CLASSES], dtype=np.float64)
+        s = v.sum()
+        if np.isfinite(s) and s > 0:
+            return v / s
     return None
 
 
-def _call(client, model, img_b64, temperature, max_tokens, max_retries=5):
+def _call(client, model, img_b64, temperature, max_tokens, max_retries=2):
     content = [
         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
         {"type": "text", "text": PROMPT},
@@ -124,9 +134,18 @@ def _call(client, model, img_b64, temperature, max_tokens, max_retries=5):
             if temperature is not None:
                 kwargs["temperature"] = temperature
             resp = client.chat.completions.create(**kwargs)
-            m = resp.choices[0].message
+            ch = resp.choices[0]
+            m = ch.message
             text = (m.content or getattr(m, "reasoning_content", None) or "")
-            return _parse_dist(text), text
+            dist = _parse_dist(text)
+            # thinking models can run past the budget; if truncated AND unparseable, retry with more room
+            if dist is None and attempt < max_retries - 1:
+                fr = getattr(ch, "finish_reason", None)
+                # reasoning doom-loop: more tokens feeds it. Nudge temperature to break determinism.
+                kwargs["temperature"] = 0.5
+                print(f"    [unparseable (finish={fr}) -> retry {attempt+1} at temp=0.5]")
+                continue
+            return dist, text
         except Exception as e:
             wait = 2 ** attempt
             print(f"    [retry {attempt+1}/{max_retries} in {wait}s] {type(e).__name__}: {str(e)[:120]}")
@@ -183,7 +202,7 @@ def run(model, limit, temperature, max_tokens, base_url, key_env, out_tag):
                 "model_argmax": int(dist.argmax()),
                 "model_entropy_bits": round(_entropy_bits(dist), 4),
                 "parse_ok": parse_ok,
-                "raw": raw[:300],
+                "raw": raw,
                 "human_dist": it["human_dist"],
                 "human_entropy": it["entropy"],
                 "human_argmax": int(it["human_argmax"]),

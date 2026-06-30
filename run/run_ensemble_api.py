@@ -74,7 +74,7 @@ def _client(base_url: str, key_env: str):
     if not key:
         raise SystemExit(f"{key_env} not set. Run: export {key_env}=... (then re-export so "
                          f"Python sees it: export {key_env}=\"${key_env}\")")
-    return OpenAI(base_url=base_url, api_key=key)
+    return OpenAI(base_url=base_url, api_key=key, timeout=90.0, max_retries=2)
 
 
 def _parse_dist(text: str) -> np.ndarray | None:
@@ -157,7 +157,7 @@ def run(model, limit, temperature, max_tokens, base_url, key_env, subset_path, o
                 "model_argmax": int(dist.argmax()),
                 "model_entropy_bits": round(_entropy_bits(dist), 4),
                 "parse_ok": parse_ok,
-                "raw": raw[:300],
+                "raw": raw,
                 "human_dist": it["human_dist"],
                 "human_entropy": it["entropy"],
                 "human_argmax": int(np.argmax(it["human_dist"])),

@@ -17,3 +17,8 @@ logs/
 .ipynb_checkpoints/
 *.tex
 cac_aaai_*
+# build artifacts / paper exports — keep source elsewhere (Overleaf)
+paper_overleaf/
+paper_overleaf.pdf
+*.bak
+*.bak[0-9]
